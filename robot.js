@@ -36,6 +36,20 @@ export const SPEC = {
 const G_ROBOT = 0x00010002;
 const G_GROUND = 0x00020001;
 
+/** GLB 에서 뽑은 파트를 복제해 돌려준다. parts 가 없으면 null (primitive 로 그린다). */
+function partMesh(parts, name, tint) {
+  const src = parts && parts[name];
+  if (!src) return null;
+  const m = src.clone();
+  m.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = true;
+    o.material = o.material.clone();
+    if (tint !== undefined) o.material.color.setHex(tint);
+  });
+  return m;
+}
+
 const AX_Y = new THREE.Vector3(0, 1, 0);
 const AX_Z = new THREE.Vector3(0, 0, 1);
 
@@ -52,8 +66,11 @@ export function buildGround(world, friction) {
 /**
  * 헥사포드 조립. 중립 자세(stand)를 FK 로 그대로 배치하므로 시작하자마자 튀지 않는다.
  * @param stand {height, reach} — 몸통 높이, mount 에서 발까지 수평 거리
+ * @param parts  선택. assets/phantomx.glb 에서 뽑은 {body, coxa, femur, tibia} 메시.
+ *               넘기면 visual 로 쓰고, 없으면 primitive 박스로 그린다 (node 벤치가 그렇다).
+ *               어느 쪽이든 물리 collider 는 항상 primitive 다.
  */
-export function buildHexapod(world, scene, stand) {
+export function buildHexapod(world, scene, stand, parts = null) {
   const { leg: L, body: B, legs, mass } = SPEC;
   // height 는 몸통 중심 → 발 '중심' 거리다. 발 ball 반지름을 안 더하면
   // 시작부터 발 6개가 지면을 footR 만큼 뚫고 들어가 로봇이 튀어오른다.
@@ -67,14 +84,17 @@ export function buildHexapod(world, scene, stand) {
   );
 
   const meshes = [];
-  const bodyMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(B.hx * 2, B.hy * 2, B.hz * 2),
-    new THREE.MeshStandardMaterial({ color: 0x40606f, metalness: 0.35, roughness: 0.55 })
-  );
-  bodyMesh.castShadow = true;
+  const bodyMesh = new THREE.Group();
   scene.add(bodyMesh);
   meshes.push([bodyRb, bodyMesh]);
   disposables.push(bodyMesh);
+  bodyMesh.add(
+    partMesh(parts, 'body', 0x40606f) ||
+      new THREE.Mesh(
+        new THREE.BoxGeometry(B.hx * 2, B.hy * 2, B.hz * 2),
+        new THREE.MeshStandardMaterial({ color: 0x40606f, metalness: 0.35, roughness: 0.55 })
+      )
+  );
 
   // 전진(+X) 방향 표시. 어느 쪽이 앞인지 모르면 gait 부호를 영원히 헷갈린다.
   const nose = new THREE.Mesh(
@@ -96,7 +116,7 @@ export function buildHexapod(world, scene, stand) {
 
     const rot = new THREE.Quaternion().setFromAxisAngle(AX_Y, yaw + q0[0]);
     let tip = mount.clone();
-    const parts = [];
+    const links = [];
 
     for (let s = 0; s < 3; s++) {
       if (s > 0) rot.multiply(new THREE.Quaternion().setFromAxisAngle(AX_Z, q0[s]));
@@ -117,15 +137,25 @@ export function buildHexapod(world, scene, stand) {
         rb
       );
 
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(lens[s], L.thick * 2, L.thick * 2),
-        new THREE.MeshStandardMaterial({ color, metalness: 0.2, roughness: 0.7 })
-      );
-      mesh.castShadow = true;
-      scene.add(mesh);
-      meshes.push([rb, mesh]);
-      disposables.push(mesh);
-      parts.push(rb);
+      // 바디 중심에 맞춰 도는 홀더. 메시는 조인트가 원점이므로 -len/2 만큼 당겨 얹는다.
+      const holder = new THREE.Group();
+      scene.add(holder);
+      meshes.push([rb, holder]);
+      disposables.push(holder);
+      const visual = partMesh(parts, ['coxa', 'femur', 'tibia'][s], color);
+      if (visual) {
+        visual.position.x = -lens[s] / 2;
+        holder.add(visual);
+      } else {
+        const box = new THREE.Mesh(
+          new THREE.BoxGeometry(lens[s], L.thick * 2, L.thick * 2),
+          new THREE.MeshStandardMaterial({ color, metalness: 0.2, roughness: 0.7 })
+        );
+        box.castShadow = true;
+        holder.add(box);
+      }
+      const mesh = holder;
+      links.push(rb);
 
       if (s === 2) {
         // 발끝만 별도 ball. 박스 모서리로 지면을 긁으면 접촉이 지저분해진다.
@@ -137,12 +167,14 @@ export function buildHexapod(world, scene, stand) {
             .setCollisionGroups(G_ROBOT),
           rb
         );
-        const foot = new THREE.Mesh(
-          new THREE.SphereGeometry(L.footR, 14, 10),
-          new THREE.MeshStandardMaterial({ color: 0xe8eef0, roughness: 0.9 })
-        );
-        foot.position.set(lens[2] / 2, 0, 0);
-        mesh.add(foot); // tibia 메시의 자식 = 동기화 공짜
+        if (!visual) {
+          const foot = new THREE.Mesh(
+            new THREE.SphereGeometry(L.footR, 14, 10),
+            new THREE.MeshStandardMaterial({ color: 0xe8eef0, roughness: 0.9 })
+          );
+          foot.position.set(lens[2] / 2, 0, 0);
+          holder.add(foot); // GLB tibia 에는 발이 이미 모델링돼 있다
+        }
       }
     }
 
@@ -152,7 +184,7 @@ export function buildHexapod(world, scene, stand) {
       [{ x: L.coxa / 2, y: 0, z: 0 }, { x: -L.femur / 2, y: 0, z: 0 }, { x: 0, y: 0, z: 1 }],
       [{ x: L.femur / 2, y: 0, z: 0 }, { x: -L.tibia / 2, y: 0, z: 0 }, { x: 0, y: 0, z: 1 }],
     ];
-    const chain = [bodyRb, ...parts];
+    const chain = [bodyRb, ...links];
     const legJoints = [];
     for (let s = 0; s < 3; s++) {
       const jd = RAPIER.JointData.revolute(anchors[s][0], anchors[s][1], anchors[s][2]);
@@ -176,10 +208,13 @@ export function buildHexapod(world, scene, stand) {
   }
 
   function dispose() {
-    for (const m of disposables) {
-      m.removeFromParent();
-      m.geometry.dispose();
-      m.material.dispose();
+    for (const g of disposables) {
+      g.traverse((o) => {
+        if (!o.isMesh) return;
+        o.geometry.dispose();
+        o.material.dispose();
+      });
+      g.removeFromParent();
     }
   }
 

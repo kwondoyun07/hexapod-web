@@ -35,15 +35,21 @@ node test.mjs
 | `robot.js` | Rapier 조립, collider, 서보 모터 |
 | `joystick.js` | 아날로그 스틱 (키보드 + 포인터) |
 | `main.js` | 렌더, UI, 루프. `window.sim` 으로 디버그 훅 노출 |
+| `bench.mjs` | 브라우저 없이 물리를 돌리는 벤치 (`npm run bench`) |
+| `assets/` | 실물 PhantomX 메시 (BSD-2) — visual 전용 |
 | `test.mjs` | 기구학·걸음새 자체 검증 |
 
-물리는 항상 primitive collider(box / capsule / ball)로 돈다. 나중에 메시를 입히더라도
-visual 로만 덮어야 하고, collider 를 메시로 바꾸면 안 된다 — 느리고 불안정하다.
+물리는 항상 primitive collider(box / capsule / ball)로 돈다. `assets/phantomx.glb` 는
+visual 로만 얹히고, collider 를 메시로 바꾸면 안 된다 — 느리고 불안정하다.
+메시를 못 받아오면 박스로 그리고 시뮬은 그대로 돈다.
+
+치수는 실존하는 로봇(PhantomX AX Hexapod)의 URDF 에서 zero-pose FK 로 뽑은 실측값이다.
 
 ## 파라미터 튜닝
 
-기본값은 감으로 정하지 않았다. `window.sim.headless(초)` 가 화면 렌더 없이 물리만
-돌려주므로, 콘솔에서 파라미터를 바꿔가며 스윕해서 뽑았다. 로봇 형상이나 질량을
+기본값은 감으로 정하지 않았다. `npm run bench` 가 브라우저 없이 물리를 돌려주므로
+(Rapier 도 three 도 node 에서 돈다) 파라미터를 바꿔가며 스윕해서 뽑았다.
+브라우저 콘솔에서도 `window.sim.headless(초)` 로 같은 걸 할 수 있다. 로봇 형상이나 질량을
 바꾸면 반드시 다시 뽑아야 한다 — 서보 게인과 물리 주파수까지 같이 움직인다.
 
 현재 기본값 실측(총 3.55 kg):

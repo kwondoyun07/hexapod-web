@@ -1,11 +1,25 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as RAPIER from '@dimforge/rapier3d-compat';
 import { SPEC, buildGround, buildHexapod } from './robot.js';
 import { GAIT, makeTargets, footTargets } from './gait.js';
 import { makeStick, keysOf } from './joystick.js';
 
 await RAPIER.init();
+
+// 실물 PhantomX 메시 (BSD-2, assets/README.md 참고). 물리는 여전히 primitive collider 로 돈다 —
+// 이건 visual 전용이다. 못 받아오면 박스로 그리고 시뮬은 그대로 돌아간다.
+let PARTS = null;
+try {
+  const gltf = await new GLTFLoader().loadAsync('./assets/phantomx.glb');
+  PARTS = {};
+  gltf.scene.traverse((o) => {
+    if (o.isMesh) PARTS[o.name.split('.')[0]] = o;
+  });
+} catch (err) {
+  console.warn('메시를 못 읽어 primitive 로 그린다:', err);
+}
 
 const G = { ...GAIT };
 // 서보 흉내 (ForceBased). stiffness = N·m/rad, damping = N·m·s/rad, maxForce = N·m.
@@ -95,7 +109,7 @@ function reset() {
   world.integrationParameters.lengthUnit = ENV.lengthUnit;
   world.integrationParameters.numInternalPgsIterations = ENV.pgs;
   buildGround(world, ENV.friction);
-  robot = buildHexapod(world, scene, { height: G.height, reach: G.stance });
+  robot = buildHexapod(world, scene, { height: G.height, reach: G.stance }, PARTS);
   t = 0;
   const p = robot.bodyRb.translation();
   controls.target.set(p.x, p.y, p.z);
