@@ -22,7 +22,13 @@ const SERVO = { stiffness: 900, damping: 0.3, maxForce: 6.0 };
 const ENV = { friction: 2.0, hz: 480 };
 // 조이스틱이 매 프레임 G.vx/vz/omega/stepLen/height 를 덮어쓴다.
 // 슬라이더는 G 가 아니라 이 기준값을 만진다 — 스틱을 끝까지 밀었을 때의 값이다.
-const CTRL = { stepLen: 0.07, stepHeight: 0.06, push: 0.006, height: 0.115, heightRange: 0.03 };
+const CTRL = {
+  stepLen: 0.07, stepHeight: 0.06, push: 0.006, height: 0.115, heightRange: 0.03,
+  // 선회 명령을 병진과 같은 스케일로 올린다. 접선 stride 는 omega × mountR 이라
+  // 게인이 없으면 회전 기여가 병진의 1/10 밖에 안 되고, 전진 중 선회가 무시된다.
+  turnGain: 1 / SPEC.mountR,
+};
+let gate = 0; // 걸음 on/off 를 시간축에서 부드럽게 (계단으로 켜면 몸통이 30 mm 튄다)
 
 // ---------- 씬 ----------
 const canvas = document.getElementById('c');
@@ -91,6 +97,7 @@ const PARAMS = [
   [G, 'period', '주기 (s)', 0.2, 2, 0.01, false],
   [G, 'duty', 'duty (접지 비율)', 0.4, 0.85, 0.01, false],
   [CTRL, 'push', '발 하중 깊이 (m)', 0, 0.03, 0.001, false],
+  [CTRL, 'turnGain', '선회 게인', 1, 30, 0.5, false],
   [SERVO, 'stiffness', '서보 강성 (N·m/rad)', 20, 2000, 20, false],
   [SERVO, 'damping', '서보 감쇠 (0.5 초과 = 발산)', 0.02, 0.8, 0.02, false],
   [SERVO, 'maxForce', '서보 최대 토크 (N·m)', 0.5, 20, 0.5, false],
@@ -140,16 +147,16 @@ function applySticks() {
   const turn = Math.abs(r.x);
   G.vx = -l.y; // W(위) = 전진
   G.vz = l.x; // D = 로봇 오른쪽(+Z)
-  G.omega = -r.x; // J = 좌선회(반시계)
+  G.omega = -r.x * CTRL.turnGain; // J = 좌선회(반시계)
   // 보폭은 두 스틱 중 큰 쪽을 따른다. move 만 쓰면 선회(오른쪽 스틱)일 때
   // 보폭이 0 이 되어 발이 제자리걸음만 하고 로봇이 돌지 않는다.
   G.stepLen = CTRL.stepLen * Math.min(1, Math.max(move, turn));
   G.height = CTRL.height - r.y * CTRL.heightRange; // I(위) = 몸을 높인다
-  // 명령이 없으면 발을 멈추고 하중도 뺀다. 서 있는 동안 push 를 계속 걸면
-  // 발이 지면을 누르려 애쓰면서 몸통이 20 mm 씩 떤다.
-  const moving = move + turn > 0.02;
-  G.stepHeight = moving ? CTRL.stepHeight : 0;
-  G.push = moving ? CTRL.push : 0;
+  // 명령이 없으면 발을 멈추고 하중도 뺀다 (서 있는 동안 push 를 걸면 몸통이 떤다).
+  // 다만 켜고 끄기를 계단으로 하면 그 순간 로봇이 튀어오르므로 시간축에서 램프한다.
+  gate += ((move + turn > 0.02 ? 1 : 0) - gate) * 0.06;
+  G.stepHeight = CTRL.stepHeight * gate;
+  G.push = CTRL.push * gate;
   return { move, turn };
 }
 

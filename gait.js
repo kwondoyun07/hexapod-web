@@ -56,25 +56,35 @@ export function shape(ph, g) {
   return [u, g.stepHeight * Math.sin(Math.PI * a)];
 }
 
-/** 6개 다리의 발 목표를 각자의 로컬 프레임으로 채운다. */
+// 1패스에서 담아두는 임시 stride (할당을 피한다)
+const _sx = new Float64Array(6);
+const _sz = new Float64Array(6);
+
+/**
+ * 6개 다리의 발 목표를 각자의 로컬 프레임으로 채운다.
+ *
+ * 다리마다 따로 정규화하면 안 된다 — 그러면 stride 의 '크기'가 버려져서
+ * 전진과 선회를 동시에 줬을 때 비율이 사라지고 선회가 통째로 무시된다.
+ * 대신 6개 중 가장 큰 stride 를 stepLen 에 맞추고 나머지는 비율대로 줄인다.
+ * 그래야 선회할 때 바깥 다리가 크게, 안쪽 다리가 작게 딛는 차동 조향이 나온다.
+ */
 export function footTargets(t, spec, g, out) {
+  let peak = 0;
   for (let i = 0; i < 6; i++) {
     const yaw = spec.legYaw[i];
     const [mx, , mz] = legMount(yaw, spec.mountR);
+    const sx = g.vx + g.omega * mz; // 병진 + 회전 접선속도 (ω × r)
+    const sz = g.vz - g.omega * mx;
+    _sx[i] = sx;
+    _sz[i] = sz;
+    const m = Math.hypot(sx, sz);
+    if (m > peak) peak = m;
+  }
+  const k = peak > 1e-6 ? g.stepLen / peak : 0;
 
-    // 몸통 프레임 진행 방향 = 병진 + 회전 접선속도 (ω × r)
-    let sx = g.vx + g.omega * mz;
-    let sz = g.vz - g.omega * mx;
-    const n = Math.hypot(sx, sz);
-    if (n > 1e-6) {
-      sx = (sx / n) * g.stepLen;
-      sz = (sz / n) * g.stepLen;
-    } else {
-      sx = sz = 0; // 명령 없음 → 제자리 스텝
-    }
-
-    const [lx, lz] = toLegLocal(sx, sz, yaw);
-
+  for (let i = 0; i < 6; i++) {
+    const yaw = spec.legYaw[i];
+    const [lx, lz] = toLegLocal(_sx[i] * k, _sz[i] * k, yaw);
     const [u, lift] = shape(legPhase(t, i, g), g);
     out[i][0] = g.stance + lx * u;
     out[i][1] = -g.height + lift;
