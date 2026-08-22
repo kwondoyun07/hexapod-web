@@ -38,7 +38,13 @@ export function legPhase(t, i, g) {
  * 그 운동량이 마찰로 급정지하면서 몸통을 뒤로 민다. 실측으로 로봇이 실제로
  * 뒤로 걸었다. 그래서 swing 을 3차 에르미트로 잇고 양 끝 기울기를 stance 와
  * 맞춘다: 착지 순간 발은 이미 stance 속도로 뒤로 움직이고 있어 지면 대비
- * 상대속도가 0 이다. 궤적 에디터를 붙인다면 이 함수만 갈아끼우면 된다.
+ * 상대속도가 0 이다.
+ *
+ * 들림 곡선도 같은 이유로 sin(pi*a) 를 쓰면 안 된다 — 그 곡선은 착지 지점에서
+ * 기울기가 최대라 발이 0.5 m/s 로 지면에 내리꽂히고, 그 충격이 매 스텝 몸통을
+ * 울린다. (1-cos(2*pi*a))/2 는 최고점은 같으면서 양 끝 수직 속도가 0 이다.
+ *
+ * 궤적 에디터를 붙인다면 이 함수만 갈아끼우면 된다.
  */
 export function shape(ph, g) {
   if (ph < g.duty) {
@@ -53,7 +59,7 @@ export function shape(ph, g) {
     (a3 - 2 * a2 + a) * m + //        h10 * m0
     (-2 * a3 + 3 * a2) * 0.5 + //     h01 * p1
     (a3 - a2) * m; //                 h11 * m1
-  return [u, g.stepHeight * Math.sin(Math.PI * a)];
+  return [u, (g.stepHeight * (1 - Math.cos(2 * Math.PI * a))) / 2];
 }
 
 // 1패스에서 담아두는 임시 stride (할당을 피한다)

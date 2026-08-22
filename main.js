@@ -19,7 +19,16 @@ const SERVO = { stiffness: 900, damping: 0.3, maxForce: 6.0 };
 // hz = 물리 적분 주파수. 240 Hz 로는 몸통이 20~30 mm 떨고, 480 Hz 면 2.4 mm 로 잡힌다.
 // 960 Hz 는 계산량만 2배일 뿐 480 보다 나아지지 않았다.
 // 프레임당 스텝 수는 hz/60 으로 자동 계산되므로 실시간 배속은 항상 1배다.
-const ENV = { friction: 2.0, hz: 480 };
+const ENV = {
+  friction: 2.0, hz: 480,
+  // Rapier 는 1 m 스케일을 가정한다. 이 로봇은 0.3 m 크기라 기본값이면 허용 관통이
+  // 1 mm — 발 반지름 16 mm 에 비해 너무 커서 발이 매 스텝 들락거리고, 그게 14 Hz
+  // 짜리 떨림이 된다. lengthUnit 을 로봇 스케일로 낮추면 사라진다.
+  lengthUnit: 0.1,
+  // 접촉 솔버 내부 반복 (기본 1). 다리 6개가 동시에 지면을 미는 구조라 1 로는 모자란다.
+  // 4 → 몸통 진동 2.5 mm, 8 → 1.2 mm. 무거우면 낮춰라.
+  pgs: 4,
+};
 // 조이스틱이 매 프레임 G.vx/vz/omega/stepLen/height 를 덮어쓴다.
 // 슬라이더는 G 가 아니라 이 기준값을 만진다 — 스틱을 끝까지 밀었을 때의 값이다.
 const CTRL = {
@@ -29,6 +38,9 @@ const CTRL = {
   turnGain: 1 / SPEC.mountR,
 };
 let gate = 0; // 걸음 on/off 를 시간축에서 부드럽게 (계단으로 켜면 몸통이 30 mm 튄다)
+// 몸통 높이는 스틱보다 훨씬 느리게 따라간다. 스틱 속도로 3 cm 를 0.1 초 만에 명령하면
+// 서보가 급하게 밀어올려 16 mm 오버슈트한다 — 눈에는 '붕 뜨는' 것으로 보인다.
+let heightState = CTRL.height;
 
 // ---------- 씬 ----------
 const canvas = document.getElementById('c');
@@ -79,6 +91,8 @@ function reset() {
   world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = 1 / ENV.hz;
   world.numSolverIterations = 8;
+  world.integrationParameters.lengthUnit = ENV.lengthUnit;
+  world.integrationParameters.numInternalPgsIterations = ENV.pgs;
   buildGround(world, ENV.friction);
   robot = buildHexapod(world, scene, { height: G.height, reach: G.stance });
   t = 0;
@@ -103,6 +117,7 @@ const PARAMS = [
   [SERVO, 'maxForce', '서보 최대 토크 (N·m)', 0.5, 20, 0.5, false],
   [ENV, 'friction', '지면 마찰', 0.1, 2, 0.05, true],
   [ENV, 'hz', '물리 주파수 (Hz)', 120, 1920, 120, true],
+  [ENV, 'pgs', '접촉 솔버 반복', 1, 12, 1, true],
 ];
 
 const ui = document.getElementById('params');
@@ -151,7 +166,9 @@ function applySticks() {
   // 보폭은 두 스틱 중 큰 쪽을 따른다. move 만 쓰면 선회(오른쪽 스틱)일 때
   // 보폭이 0 이 되어 발이 제자리걸음만 하고 로봇이 돌지 않는다.
   G.stepLen = CTRL.stepLen * Math.min(1, Math.max(move, turn));
-  G.height = CTRL.height - r.y * CTRL.heightRange; // I(위) = 몸을 높인다
+  const wantHeight = CTRL.height - r.y * CTRL.heightRange; // I(위) = 몸을 높인다
+  heightState += (wantHeight - heightState) * 0.03;
+  G.height = heightState;
   // 명령이 없으면 발을 멈추고 하중도 뺀다 (서 있는 동안 push 를 걸면 몸통이 떤다).
   // 다만 켜고 끄기를 계단으로 하면 그 순간 로봇이 튀어오르므로 시간축에서 램프한다.
   gate += ((move + turn > 0.02 ? 1 : 0) - gate) * 0.06;
