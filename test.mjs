@@ -1,11 +1,21 @@
 // node test.mjs — 브라우저 없이 도는 기구학/걸음새 자체 검증.
 // 물리(Rapier)는 여기서 안 돈다. 여기가 깨지면 브라우저에서도 반드시 깨진다.
 import assert from 'node:assert/strict';
-import { legIK, legFK, legMount, toLegLocal, toBodyFrame } from './ik.js';
+import { legIK, legFK, toLegLocal, toBodyFrame } from './ik.js';
 import { GAIT, makeTargets, footTargets, legPhase, shape } from './gait.js';
 
-const L = { coxa: 0.055, femur: 0.1, tibia: 0.145 };
-const spec = { mountR: 0.1, legYaw: [45, 90, 135, -135, -90, -45].map((d) => (d * Math.PI) / 180) };
+// PhantomX 실측 (robot.js SPEC 과 같은 값 — 여기서는 three.js 의존성을 피하려고 다시 적는다)
+const L = { coxa: 0.054, femur: 0.0661, tibia: 0.1632 };
+const spec = {
+  legs: [
+    { x: 0.1248, z: 0.0616, yaw: -45 },
+    { x: 0.0, z: 0.1034, yaw: -90 },
+    { x: -0.1248, z: 0.0616, yaw: -135 },
+    { x: -0.1248, z: -0.0616, yaw: 135 },
+    { x: 0.0, z: -0.1034, yaw: 90 },
+    { x: 0.1248, z: -0.0616, yaw: 45 },
+  ].map((l) => ({ ...l, yaw: (l.yaw * Math.PI) / 180 })),
+};
 const REACH_MAX = L.femur + L.tibia;
 
 // 1. IK → FK 왕복이 정확히 닫히는가
@@ -71,12 +81,33 @@ for (let n = 0; n <= 400; n++) {
 }
 assert.ok(Math.abs(maxLift - g.stepHeight) < 1e-3, `스윙 최고점이 stepHeight 에 못 미친다: ${maxLift}`);
 
-// 6. 순수 회전 명령이면 발은 접선 방향으로만 움직여야 한다 (lx ≈ 0).
-//    이게 깨지면 좌표계 부호가 틀린 것이다 — 로봇이 돌면서 스스로를 끌고 넘어진다.
-const gr = { ...GAIT, vx: 0, vz: 0, omega: 1 };
-footTargets(0.1, spec, gr, out);
-for (let i = 0; i < 6; i++) {
-  assert.ok(Math.abs(out[i][0] - gr.stance) < 1e-9, `다리 ${i} 회전 시 반경이 변한다: ${out[i][0]}`);
+// 6. 순수 회전이면 발은 몸통 중심 기준 원 위를 돌아야 한다 — 반경이 변하면 안 된다.
+//    이게 깨지면 로봇이 제자리 선회 중에 스스로를 끌고 간다.
+//    (mount 기준이 아니라 몸통 중심 기준이다: mount 방위와 다리 방향은 서로 다르다.)
+{
+  const gr = { ...GAIT, vx: 0, vz: 0, omega: 1 };
+  const radii = [];
+  for (const time of [0, 0.2, 0.45, 0.7]) {
+    footTargets(time, spec, gr, out);
+    for (let i = 0; i < 6; i++) {
+      const { x: mx, z: mz, yaw } = spec.legs[i];
+      const [rx, rz] = toBodyFrame(out[i][0], out[i][2], yaw);
+      radii[i] = radii[i] || [];
+      radii[i].push(Math.hypot(mx + rx, mz + rz));
+    }
+  }
+  // stance 궤적이 직선이라 원호를 현으로 근사한다. 그만큼은 줄어드는 게 정상이고,
+  // 그 이상 변하면 접선 계산이 틀린 것이다.
+  for (let i = 0; i < 6; i++) {
+    const { x: mx, z: mz, yaw } = spec.legs[i];
+    const R0 = Math.hypot(mx + gr.stance * Math.cos(yaw), mz - gr.stance * Math.sin(yaw));
+    const chordErr = R0 - Math.sqrt(R0 * R0 - (gr.stepLen / 2) ** 2);
+    const spread = Math.max(...radii[i]) - Math.min(...radii[i]);
+    assert.ok(
+      spread <= chordErr * 1.15,
+      `다리 ${i} 회전 시 반경이 ${(spread * 1000).toFixed(2)} mm 변한다 (현 근사 한계 ${(chordErr * 1000).toFixed(2)} mm)`
+    );
+  }
 }
 
 // 7. 명령이 0 이면 제자리 스텝 (수평 이동 없음)
@@ -116,12 +147,17 @@ for (let k = 0; k < 200; k++) {
     for (const time of [0, 0.17, 0.4, 0.83]) {
       footTargets(time, spec, gc, out2);
       for (let i = 0; i < 6; i++) {
-        const yaw = spec.legYaw[i];
-        const [mx, , mz] = legMount(yaw, spec.mountR);
-        const [fx, fz] = toBodyFrame(out2[i][0], out2[i][2], yaw);
-        const da = Math.atan2(Math.sin(Math.atan2(fz, fx) - Math.atan2(mz, mx)), Math.cos(Math.atan2(fz, fx) - Math.atan2(mz, mx)));
-        assert.ok(Math.abs(da) < 0.6, `다리 ${i} 가 mount 방위에서 ${((da * 180) / Math.PI).toFixed(0)}° 벗어났다 — 교차한다`);
-        assert.ok(Math.hypot(fx, fz) > spec.mountR, `다리 ${i} 발이 mount 안쪽으로 접혔다`);
+        const { x: mx, z: mz, yaw } = spec.legs[i];
+        // 발 목표는 mount 를 원점으로 하므로, 몸통 원점 기준으로 되돌려 비교한다
+        const [rx, rz] = toBodyFrame(out2[i][0], out2[i][2], yaw);
+        const [fx, fz] = [mx + rx, mz + rz];
+        // 발은 mount 보다 바깥에 있어야 하고, mount → 발 벡터가 다리 방향이어야 한다.
+        // R_y 규약상 다리 로컬 +x 는 몸통 프레임에서 방위각 -yaw 에 해당한다.
+        const outward = Math.atan2(rz, rx);
+        const want = -yaw;
+        const da = Math.atan2(Math.sin(outward - want), Math.cos(outward - want));
+        assert.ok(Math.abs(da) < 0.6, `다리 ${i} 가 뻗는 방향에서 ${((da * 180) / Math.PI).toFixed(0)}° 벗어났다 — 교차한다`);
+        assert.ok(Math.hypot(fx, fz) > Math.hypot(mx, mz), `다리 ${i} 발이 mount 안쪽으로 접혔다`);
       }
     }
   }

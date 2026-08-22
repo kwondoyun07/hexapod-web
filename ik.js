@@ -29,11 +29,7 @@ export function legFK(q1, q2, q3, L) {
 // --- 다리 배치 변환 ---------------------------------------------------
 // three.js 의 R_y(θ) 는 (1,0,0) → (cosθ, 0, -sinθ) 다. z 부호를 손으로 쓰다 한 번
 // 틀리면 다리가 몸통을 가로질러 반대편으로 뻗는다. 그래서 규칙을 여기 한 곳에만 둔다.
-
-/** 다리의 mount 위치(몸통 로컬). 다리가 뻗는 방향과 반드시 같은 방위여야 한다. */
-export function legMount(yaw, mountR) {
-  return [mountR * Math.cos(yaw), 0, -mountR * Math.sin(yaw)];
-}
+// mount 위치는 SPEC.legs 가 실측값으로 들고 있다 — yaw 에서 계산하지 않는다.
 
 /** 몸통 프레임 벡터 → 다리 로컬 (R_y(-yaw)) */
 export function toLegLocal(x, z, yaw) {

@@ -1,4 +1,4 @@
-import { legMount, toLegLocal } from './ik.js';
+import { toLegLocal } from './ik.js';
 
 // Tripod gait 발끝 궤적 생성. node 로 그대로 검증한다 (test.mjs).
 // 여기가 앞으로 제일 자주 만질 파일이다. 궤적 에디터를 붙인다면 shape() 만 갈아끼우면 된다.
@@ -77,10 +77,14 @@ const _sz = new Float64Array(6);
 export function footTargets(t, spec, g, out) {
   let peak = 0;
   for (let i = 0; i < 6; i++) {
-    const yaw = spec.legYaw[i];
-    const [mx, , mz] = legMount(yaw, spec.mountR);
-    const sx = g.vx + g.omega * mz; // 병진 + 회전 접선속도 (ω × r)
-    const sz = g.vz - g.omega * mx;
+    // 회전 접선속도(ω × r)의 r 은 mount 가 아니라 '발의 중립 위치'다.
+    // mount 방위와 다리가 뻗는 방향이 다르기 때문에(실물이 그렇다) mount 로 계산하면
+    // 제자리 선회에서도 발이 반경 방향으로 밀려 로봇이 스스로를 끌고 간다.
+    const { x: mx, z: mz, yaw } = spec.legs[i];
+    const fx = mx + g.stance * Math.cos(yaw);
+    const fz = mz - g.stance * Math.sin(yaw);
+    const sx = g.vx + g.omega * fz;
+    const sz = g.vz - g.omega * fx;
     _sx[i] = sx;
     _sz[i] = sz;
     const m = Math.hypot(sx, sz);
@@ -89,8 +93,7 @@ export function footTargets(t, spec, g, out) {
   const k = peak > 1e-6 ? g.stepLen / peak : 0;
 
   for (let i = 0; i < 6; i++) {
-    const yaw = spec.legYaw[i];
-    const [lx, lz] = toLegLocal(_sx[i] * k, _sz[i] * k, yaw);
+    const [lx, lz] = toLegLocal(_sx[i] * k, _sz[i] * k, spec.legs[i].yaw);
     const [u, lift] = shape(legPhase(t, i, g), g);
     out[i][0] = g.stance + lx * u;
     out[i][1] = -g.height + lift;

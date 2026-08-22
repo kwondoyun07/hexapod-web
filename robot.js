@@ -1,22 +1,35 @@
 import * as THREE from 'three';
 import * as RAPIER from '@dimforge/rapier3d-compat';
-import { legIK, legMount } from './ik.js';
+import { legIK } from './ik.js';
 
 export { legIK, legFK } from './ik.js';
 
-// 로봇 정의. 물리는 항상 이 primitive 로 돈다.
-// Blender 메시는 나중에 visual 로만 덮는다 — collider 를 메시로 바꾸지 마라, 느리고 불안정하다.
+// 로봇 정의 — Trossen/Génération Robots 의 PhantomX AX Hexapod 실측 치수.
+// URDF(BSD-2, HumaRobotics/phantomx_description)에서 zero-pose FK 로 뽑았다.
+// 물리는 항상 primitive collider 로 돈다. 메시는 visual 로만 덮어야 한다.
 export const SPEC = {
-  body: { r: 0.115, h: 0.045 },
-  leg: { coxa: 0.055, femur: 0.1, tibia: 0.145, thick: 0.013, footR: 0.016 },
-  mountR: 0.1,
-  // 실측 질량 (kg). density 로 잡으면 안 된다 — 링크 부피는 작은데 실제로는
-  // 링크마다 서보가 통째로 붙어서 훨씬 무겁다. 너무 가벼우면 관성이 작아
-  // 서보 오버슈트가 그대로 떨림이 되고, 몸통:링크 질량비가 커져 솔버도 나빠진다.
-  // PhantomX 급 기준. 저울에 올려보고 여기부터 맞춰라.
-  mass: { body: 2.2, coxa: 0.08, femur: 0.075, tibia: 0.06, foot: 0.01 },
-  // [앞우, 중우, 뒤우, 뒤좌, 중좌, 앞좌] — 짝/홀 인덱스가 그대로 tripod 그룹이 된다
-  legYaw: [45, 90, 135, -135, -90, -45].map((d) => (d * Math.PI) / 180),
+  body: { hx: 0.1368, hy: 0.0228, hz: 0.115 }, // 실측 bbox 0.274 x 0.046 x 0.230 의 절반
+  leg: { coxa: 0.054, femur: 0.0661, tibia: 0.1632, thick: 0.013, footR: 0.014 },
+
+  // 다리 배치. mount 위치와 다리가 뻗는 방향(yaw)은 별개다 —
+  // 실물 몸통은 직사각형에 가깝고 다리는 거기서 대각선으로 뻗는다.
+  // (앞뒤 다리는 반경 0.139, 중간 다리는 0.103 으로 서로 다르다.)
+  // 순서는 [우앞, 우중, 우뒤, 좌뒤, 좌중, 좌앞] — 짝/홀 인덱스가 그대로 tripod 두 그룹이 된다.
+  // yaw 는 R_y 규약이라 화면 방위각의 부호 반대다 (방위각 = -yaw).
+  // 부호를 뒤집어 넣으면 다리가 몸통을 가로질러 반대편으로 뻗는다.
+  legs: [
+    { x: 0.1248, z: 0.0616, yaw: -45 },
+    { x: 0.0, z: 0.1034, yaw: -90 },
+    { x: -0.1248, z: 0.0616, yaw: -135 },
+    { x: -0.1248, z: -0.0616, yaw: 135 },
+    { x: 0.0, z: -0.1034, yaw: 90 },
+    { x: 0.1248, z: -0.0616, yaw: 45 },
+  ].map((L) => ({ ...L, yaw: (L.yaw * Math.PI) / 180 })),
+
+  // 실측 질량 (kg). PhantomX AX Metal 실물은 배터리 포함 약 2.4 kg 이고,
+  // 그중 1 kg 가까이가 AX-12A 서보 18개다. URDF 의 inertial 값(링크당 24 g)은
+  // 서보를 빼놓은 값이라 그대로 쓰면 안 된다.
+  mass: { body: 1.2, coxa: 0.065, femur: 0.075, tibia: 0.05, foot: 0.008 },
 };
 
 // 로봇 링크끼리는 서로 통과, 지면과만 충돌한다 (self-collision 은 조인트 안정성만 해친다)
@@ -41,7 +54,7 @@ export function buildGround(world, friction) {
  * @param stand {height, reach} — 몸통 높이, mount 에서 발까지 수평 거리
  */
 export function buildHexapod(world, scene, stand) {
-  const { leg: L, body: B, legYaw, mountR, mass } = SPEC;
+  const { leg: L, body: B, legs, mass } = SPEC;
   // height 는 몸통 중심 → 발 '중심' 거리다. 발 ball 반지름을 안 더하면
   // 시작부터 발 6개가 지면을 footR 만큼 뚫고 들어가 로봇이 튀어오른다.
   const bodyY = stand.height + L.footR + 0.001;
@@ -49,13 +62,13 @@ export function buildHexapod(world, scene, stand) {
 
   const bodyRb = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(0, bodyY, 0));
   world.createCollider(
-    RAPIER.ColliderDesc.cylinder(B.h / 2, B.r).setMass(mass.body).setCollisionGroups(G_ROBOT),
+    RAPIER.ColliderDesc.cuboid(B.hx, B.hy, B.hz).setMass(mass.body).setCollisionGroups(G_ROBOT),
     bodyRb
   );
 
   const meshes = [];
   const bodyMesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(B.r, B.r, B.h, 6),
+    new THREE.BoxGeometry(B.hx * 2, B.hy * 2, B.hz * 2),
     new THREE.MeshStandardMaterial({ color: 0x40606f, metalness: 0.35, roughness: 0.55 })
   );
   bodyMesh.castShadow = true;
@@ -69,7 +82,7 @@ export function buildHexapod(world, scene, stand) {
     new THREE.MeshStandardMaterial({ color: 0x9bff6a })
   );
   nose.rotation.z = -Math.PI / 2;
-  nose.position.set(B.r + 0.02, 0, 0);
+  nose.position.set(B.hx + 0.03, 0, 0);
   bodyMesh.add(nose);
 
   const joints = [];
@@ -77,8 +90,8 @@ export function buildHexapod(world, scene, stand) {
   const lens = [L.coxa, L.femur, L.tibia];
 
   for (let i = 0; i < 6; i++) {
-    const yaw = legYaw[i];
-    const mount = new THREE.Vector3(...legMount(yaw, mountR));
+    const { x: mountX, z: mountZ, yaw } = legs[i];
+    const mount = new THREE.Vector3(mountX, 0, mountZ);
     const color = i % 2 === 0 ? 0x2ec4b6 : 0xff8a3d; // tripod 그룹 A / B
 
     const rot = new THREE.Quaternion().setFromAxisAngle(AX_Y, yaw + q0[0]);
@@ -178,7 +191,7 @@ export function buildHexapod(world, scene, stand) {
     for (let i = 0; i < 6; i++) {
       const q = legIK(targets[i][0], targets[i][1], targets[i][2], L);
       const j = joints[i];
-      j[0].configureMotorPosition(legYaw[i] + q[0], servo.stiffness, servo.damping);
+      j[0].configureMotorPosition(legs[i].yaw + q[0], servo.stiffness, servo.damping);
       j[1].configureMotorPosition(q[1], servo.stiffness, servo.damping);
       j[2].configureMotorPosition(q[2], servo.stiffness, servo.damping);
       for (let s = 0; s < 3; s++) j[s].setMotorMaxForce(servo.maxForce);

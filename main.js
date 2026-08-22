@@ -34,9 +34,9 @@ const ENV = {
 // 슬라이더는 G 가 아니라 이 기준값을 만진다 — 스틱을 끝까지 밀었을 때의 값이다.
 const CTRL = {
   stepLen: 0.07, stepHeight: 0.06, push: 0.006, height: 0.115, heightRange: 0.03,
-  // 선회 명령을 병진과 같은 스케일로 올린다. 접선 stride 는 omega × mountR 이라
-  // 게인이 없으면 회전 기여가 병진의 1/10 밖에 안 되고, 전진 중 선회가 무시된다.
-  turnGain: 1 / SPEC.mountR,
+  // 선회 명령을 병진과 같은 스케일로 올린다. 접선 stride 는 omega × (mount 반경) 이라
+  // 게인이 없으면 회전 기여가 병진의 1/8 밖에 안 되고, 전진 중 선회가 무시된다.
+  turnGain: 1 / Math.hypot(SPEC.legs[0].x, SPEC.legs[0].z),
 };
 let gate = 0; // 걸음 on/off 를 시간축에서 부드럽게 (계단으로 켜면 몸통이 30 mm 튄다)
 // 몸통 높이는 스틱보다 훨씬 느리게 따라간다. 스틱 속도로 3 cm 를 0.1 초 만에 명령하면
