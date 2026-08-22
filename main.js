@@ -26,8 +26,9 @@ const ENV = {
   // 짜리 떨림이 된다. lengthUnit 을 로봇 스케일로 낮추면 사라진다.
   lengthUnit: 0.1,
   // 접촉 솔버 내부 반복 (기본 1). 다리 6개가 동시에 지면을 미는 구조라 1 로는 모자란다.
-  // 4 → 몸통 진동 2.5 mm, 8 → 1.2 mm. 무거우면 낮춰라.
-  pgs: 4,
+  // 4 → 몸통 진동 2.5 mm, 8 → 1.2 mm. 실측 비용은 60 fps 예산의 12% → 15% 뿐이라
+  // 8 을 쓴다. 프레임이 모자라면 낮춰라 (2 까지는 9%).
+  pgs: 8,
 };
 // 조이스틱이 매 프레임 G.vx/vz/omega/stepLen/height 를 덮어쓴다.
 // 슬라이더는 G 가 아니라 이 기준값을 만진다 — 스틱을 끝까지 밀었을 때의 값이다.
@@ -165,7 +166,9 @@ function applySticks() {
   G.omega = -r.x * CTRL.turnGain; // J = 좌선회(반시계)
   // 보폭은 두 스틱 중 큰 쪽을 따른다. move 만 쓰면 선회(오른쪽 스틱)일 때
   // 보폭이 0 이 되어 발이 제자리걸음만 하고 로봇이 돌지 않는다.
-  G.stepLen = CTRL.stepLen * Math.min(1, Math.max(move, turn));
+  // gate 를 곱해 첫 스텝을 작게 시작한다 — tripod 출발은 좌2/우1 이 먼저 나가서
+  // 본질적으로 비대칭이라, 처음부터 최대 보폭으로 내디디면 몸이 7.5° 틀어진 채 출발한다.
+  G.stepLen = CTRL.stepLen * Math.min(1, Math.max(move, turn)) * gate;
   const wantHeight = CTRL.height - r.y * CTRL.heightRange; // I(위) = 몸을 높인다
   heightState += (wantHeight - heightState) * 0.03;
   G.height = heightState;
