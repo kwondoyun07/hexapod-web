@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import * as RAPIER from '@dimforge/rapier3d-compat';
 import { SPEC, buildGround, buildHexapod } from './robot.js';
 import { GAIT, makeTargets, footTargets } from './gait.js';
@@ -12,7 +13,12 @@ await RAPIER.init();
 // 이건 visual 전용이다. 못 받아오면 박스로 그리고 시뮬은 그대로 돌아간다.
 let PARTS = null;
 try {
-  const gltf = await new GLTFLoader().loadAsync('./assets/phantomx.glb');
+  const draco = new DRACOLoader();
+  draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/libs/draco/');
+  const loader = new GLTFLoader();
+  loader.setDRACOLoader(draco);
+  const gltf = await loader.loadAsync('./assets/phantomx.glb');
+  draco.dispose();
   PARTS = {};
   gltf.scene.traverse((o) => {
     if (o.isMesh) PARTS[o.name.split('.')[0]] = o;
